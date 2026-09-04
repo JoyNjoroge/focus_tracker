@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>focus-tracker.sh</title>
+<style>
+  :root {
+    --bg: #060a08;
+    --term: #0c1210;
+    --panel: #0f1613;
+    --fg: #cdeede;
+    --muted: #52705f;
+    --dim: #385146;
+    --accent: #39ff88;
+    --accent-dim: #1f7a4a;
+    --cyan: #5fd3f3;
+    --amber: #e8b34a;
+    --danger: #e0715a;
+    --border: #1c2b23;
+    --mono: ui-monospace, "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+  }
+  body {
+    min-height: 100vh;
+    padding: 36px 16px 60px;
+    background-image:
+      repeating-linear-gradient(rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at center, rgba(57,255,136,0.03), transparent 70%);
+  }
+  .term {
+    max-width: 620px;
+    margin: 0 auto;
+    background: var(--term);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 0 60px rgba(57,255,136,0.05), 0 20px 40px rgba(0,0,0,0.4);
+    overflow: hidden;
+  }
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #0a0f0d;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; opacity: 0.55; }
+  .dot.r { background: #e0715a; }
+  .dot.y { background: #e8b34a; }
+  .dot.g { background: #39ff88; }
+  .titlebar .name {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .body { padding: 22px 22px 8px; }
+
+  .prompt-line {
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .prompt-line .path { color: var(--accent); }
+  .comment {
+    font-size: 12px;
+    color: var(--dim);
+    margin: 22px 0 10px;
+  }
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    background: var(--accent);
+    margin-left: 2px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* statusline */
+  .statusline {
+    display: flex;
+    margin: 20px 0 4px;
+    border: 1px solid var(--border);
+    background: #0a0f0d;
+    font-size: 12px;
+  }
+  .seg {
+    flex: 1;
+    padding: 9px 12px;
+    border-right: 1px solid var(--border);
+  }
+  .seg:last-child { border-right: none; }
+  .seg .v { color: var(--accent); font-size: 14px; }
+  .seg .k { color: var(--muted); margin-left: 6px; }
+
+  /* now panel */
+  .now-panel {
+    border-left: 3px solid var(--dim);
+    padding: 16px 16px 16px 16px;
+    background: var(--panel);
+  }
+  .now-panel.active { border-left-color: var(--accent); }
+  .now-empty {
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  .now-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .pulse {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(57,255,136,0.5); }
+    50% { opacity: 0.5; box-shadow: 0 0 0 5px rgba(57,255,136,0); }
+  }
+  .pulse.paused { animation: none; background: var(--amber); opacity: 0.7; }
+  .now-task {
+    font-size: 17px;
+    color: var(--fg);
+    word-break: break-word;
+  }
+  .now-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+  }
+  .timer {
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .timer.running { color: var(--accent); }
+
+  button {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    padding: 7px 11px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.primary:hover { background: var(--accent); color: #04140a; }
+  button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .now-actions { display: flex; gap: 8px; }
+
+  /* capture */
+  .capture {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 22px 0 6px;
+    border: 1px solid var(--border);
+    background: #0a0f0d;
+    padding: 4px 4px 4px 12px;
+  }
+  .capture .arrow { color: var(--cyan); font-size: 13px; }
+  .capture input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 4px;
+  }
+  .capture input::placeholder { color: var(--dim); }
+  .capture button { border-color: var(--cyan); color: var(--cyan); }
+  .capture button:hover { background: var(--cyan); color: #04140a; }
+
+  /* waiting list */
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .queue-item .arrow { color: var(--dim); flex-shrink: 0; }
+  .queue-item .text { flex: 1; color: var(--fg); }
+  .queue-item .age { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .queue-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .queue-actions button { font-size: 11px; padding: 5px 9px; }
+  .empty-hint {
+    color: var(--dim);
+    font-size: 13px;
+    padding: 4px 0 6px;
+  }
+
+  /* done list */
+  .done-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .done-item .box { color: var(--accent); margin-right: 8px; }
+  .done-item .t { color: var(--fg); }
+  .done-item .time { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+  footer {
+    padding: 18px 22px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+  }
+  footer button { font-size: 11px; color: var(--dim); border-color: var(--border); }
+  footer button:hover { color: var(--danger); border-color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="term">
+
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="name">focus-tracker.sh</span>
+  </div>
+
+  <div class="body">
+    <div class="prompt-line"><span class="path">guest@focus</span>:~$ ./track --today<span class="cursor">&nbsp;</span></div>
+    <div class="prompt-line" id="dateLabel" style="margin-top:4px;"></div>
+
+    <div class="statusline">
+      <div class="seg"><span class="v" id="statFocused">0m</span><span class="k">focused</span></div>
+      <div class="seg"><span class="v" id="statDone">0</span><span class="k">done</span></div>
+      <div class="seg"><span class="v" id="statSwitches">0</span><span class="k">switches</span></div>
+      <div class="seg"><span class="v" id="statLongest">0m</span><span class="k">longest</span></div>
+    </div>
+
+    <p class="comment"># now</p>
+    <div id="nowCard"></div>
+
+    <div class="capture">
+      <span class="arrow">&gt;</span>
+      <input id="captureInput" type="text" placeholder="next task, or whatever just pulled focus" />
+      <button id="captureBtn">[hold]</button>
+    </div>
+
+    <p class="comment" id="parkedLabel"># waiting_queue</p>
+    <div id="parkedList"></div>
+
+    <p class="comment" id="doneLabel" style="display:none;"># completed</p>
+    <div id="doneList"></div>
+  </div>
+
+  <footer>
+    <button id="resetBtn">$ reset --day</button>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'focus-tracker-state';
+  let state = null;
+  let confirmingReset = false;
+
+  function uid() { return Math.random().toString(36).slice(2, 10); }
+  function now() { return Date.now(); }
+
+  function defaultState() {
+    return { active: null, parked: [], done: [], switches: 0, longestStretchMs: 0 };
+  }
+
+  function fmt(ms) {
+    const totalSec = Math.max(0, Math.round(ms / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+    return String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
+  }
+  function fmtShort(ms) {
+    const totalMin = Math.round(ms / 60000);
+    if (totalMin < 1) return '<1m';
+    if (totalMin < 60) return totalMin + 'm';
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    return h + 'h ' + m + 'm';
+  }
+  function timeAgo(ts) {
+    const diff = now() - ts;
+    const min = Math.round(diff / 60000);
+    if (min < 1) return 'now';
+    if (min < 60) return min + 'm';
+    const hr = Math.round(min / 60);
+    return hr + 'h';
+  }
+
+  async function save() {
+    try { await window.storage.set(STORAGE_KEY, JSON.stringify(state), false); }
+    catch (e) { console.error('save failed', e); }
+  }
+
+  async function load() {
+    try {
+      const res = await window.storage.get(STORAGE_KEY, false);
+      state = res && res.value ? JSON.parse(res.value) : defaultState();
+    } catch (e) {
+      state = defaultState();
+    }
+  }
+
+  function currentRunMs() {
+    if (!state.active || state.active.paused) return 0;
+    return now() - state.active.startedAt;
+  }
+
+  function registerRun() {
+    if (state.active && !state.active.paused) {
+      const run = now() - state.active.startedAt;
+      state.longestStretchMs = Math.max(state.longestStretchMs, run);
+    }
+  }
+
+  function totalFocusedMs() {
+    let sum = 0;
+    state.done.forEach(d => sum += d.totalMs);
+    state.parked.forEach(p => sum += p.accumulatedMs);
+    if (state.active) sum += state.active.accumulatedMs + currentRunMs();
+    return sum;
+  }
+
+  function startOrSwitch(item) {
+    registerRun();
+    if (state.active) {
+      const runMs = currentRunMs();
+      state.active.accumulatedMs += runMs;
+      state.parked.unshift({
+        id: state.active.id,
+        text: state.active.text,
+        addedAt: now(),
+        accumulatedMs: state.active.accumulatedMs
+      });
+      state.switches += 1;
+    }
+    state.parked = state.parked.filter(p => p.id !== item.id);
+    state.active = {
+      id: item.id,
+      text: item.text,
+      accumulatedMs: item.accumulatedMs || 0,
+      startedAt: now(),
+      paused: false
+    };
+    save(); render();
+  }
+
+  function togglePause() {
+    if (!state.active) return;
+    if (state.active.paused) {
+      state.active.paused = false;
+      state.active.startedAt = now();
+    } else {
+      registerRun();
+      state.active.accumulatedMs += currentRunMs();
+      state.active.paused = true;
+      state.active.startedAt = null;
+    }
+    save(); render();
+  }
+
+  function completeActive() {
+    if (!state.active) return;
+    registerRun();
+    const total = state.active.accumulatedMs + currentRunMs();
+    state.done.unshift({ id: state.active.id, text: state.active.text, totalMs: total, doneAt: now() });
+    state.active = null;
+    save(); render();
+  }
+
+  function addCapture(text) {
+    if (!text.trim()) return;
+    state.parked.unshift({ id: uid(), text: text.trim(), addedAt: now(), accumulatedMs: 0 });
+    save(); render();
+  }
+
+  function dropParked(id) {
+    state.parked = state.parked.filter(p => p.id !== id);
+    save(); render();
+  }
+
+  function resetDay() {
+    state = defaultState();
+    save(); render();
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function render() {
+    document.getElementById('dateLabel').textContent =
+      '# ' + new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).toLowerCase();
+
+    document.getElementById('statFocused').textContent = fmtShort(totalFocusedMs());
+    document.getElementById('statDone').textContent = state.done.length;
+    document.getElementById('statSwitches').textContent = state.switches;
+    const longest = Math.max(state.longestStretchMs, currentRunMs());
+    document.getElementById('statLongest').textContent = fmtShort(longest);
+
+    const nowCard = document.getElementById('nowCard');
+    if (state.active) {
+      const elapsed = state.active.accumulatedMs + currentRunMs();
+      nowCard.innerHTML =
+        '<div class="now-panel active">' +
+          '<div class="now-top">' +
+            '<span class="pulse' + (state.active.paused ? ' paused' : '') + '"></span>' +
+            '<span class="now-task">' + escapeHtml(state.active.text) + '</span>' +
+          '</div>' +
+          '<div class="now-meta">' +
+            '<span class="timer ' + (state.active.paused ? '' : 'running') + '">' +
+              (state.active.paused ? 'paused / ' : '') + fmt(elapsed) +
+            '</span>' +
+            '<span class="now-actions">' +
+              '<button id="pauseBtn">[' + (state.active.paused ? 'resume' : 'pause') + ']</button>' +
+              '<button class="primary" id="doneBtn">[done]</button>' +
+            '</span>' +
+          '</div>' +
+        '</div>';
+      document.getElementById('pauseBtn').onclick = togglePause;
+      document.getElementById('doneBtn').onclick = completeActive;
+    } else {
+      nowCard.innerHTML = '<div class="now-panel"><div class="now-empty">no active process. start one below, or pull one from the queue.</div></div>';
+    }
+
+    const parkedList = document.getElementById('parkedList');
+    const parkedLabel = document.getElementById('parkedLabel');
+    parkedLabel.textContent = '# waiting_queue' + (state.parked.length ? ' (' + state.parked.length + ')' : '');
+    if (state.parked.length === 0) {
+      parkedList.innerHTML = '<div class="empty-hint">queue empty. new thoughts land here instead of taking over now.</div>';
+    } else {
+      parkedList.innerHTML = '';
+      state.parked.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'queue-item';
+        row.innerHTML =
+          '<span class="arrow">-&gt;</span>' +
+          '<span class="text">' + escapeHtml(item.text) + '</span>' +
+          '<span class="age">' + timeAgo(item.addedAt) + '</span>' +
+          '<span class="queue-actions">' +
+            '<button data-id="' + item.id + '" class="switchBtn">[' + (state.active ? 'switch' : 'start') + ']</button>' +
+            '<button data-id="' + item.id + '" class="dropBtn danger">[drop]</button>' +
+          '</span>';
+        parkedList.appendChild(row);
+      });
+      parkedList.querySelectorAll('.switchBtn').forEach(b => {
+        b.onclick = () => {
+          const item = state.parked.find(p => p.id === b.dataset.id);
+          if (item) startOrSwitch(item);
+        };
+      });
+      parkedList.querySelectorAll('.dropBtn').forEach(b => {
+        b.onclick = () => dropParked(b.dataset.id);
+      });
+    }
+
+    const doneList = document.getElementById('doneList');
+    const doneLabel = document.getElementById('doneLabel');
+    if (state.done.length === 0) {
+      doneLabel.style.display = 'none';
+      doneList.innerHTML = '';
+    } else {
+      doneLabel.style.display = 'block';
+      doneList.innerHTML = '';
+      state.done.forEach(d => {
+        const row = document.createElement('div');
+        row.className = 'done-item';
+        row.innerHTML =
+          '<span><span class="box">[x]</span><span class="t">' + escapeHtml(d.text) + '</span></span>' +
+          '<span class="time">' + fmtShort(d.totalMs) + '</span>';
+        doneList.appendChild(row);
+      });
+    }
+  }
+
+  document.getElementById('captureBtn').onclick = () => {
+    const input = document.getElementById('captureInput');
+    addCapture(input.value);
+    input.value = '';
+    input.focus();
+  };
+  document.getElementById('captureInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('captureBtn').click();
+  });
+
+  const resetBtn = document.getElementById('resetBtn');
+  resetBtn.onclick = () => {
+    if (!confirmingReset) {
+      confirmingReset = true;
+      resetBtn.textContent = '$ confirm? this clears today';
+      setTimeout(() => {
+        confirmingReset = false;
+        resetBtn.textContent = '$ reset --day';
+      }, 3000);
+    } else {
+      confirmingReset = false;
+      resetDay();
+    }
+  };
+
+  setInterval(() => {
+    if (state && state.active && !state.active.paused) render();
+  }, 1000);
+
+  load().then(render);
+})();
+</script>
+</body>
+</html>
